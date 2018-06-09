@@ -1,0 +1,393 @@
+---
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+## Load library
+
+```{r}
+setwd("D:\\Data Science ToolBox\\PROJECT\\DMC-2018\\Task")
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(doParallel)
+library(gridExtra)
+library(AppliedPredictiveModeling)
+library(gbm)
+library(randomForest)
+library(xgboost)
+library(neuralnet)
+library(corrplot)
+library(rpart)
+library(ipred)
+
+```
+## Load Data
+
+```{r echo = FALSE}
+train_csv <- "train.csv"
+items_csv <- "items.csv"
+prices_csv <- "prices.csv"
+train <- read.csv(train_csv, header = TRUE, sep = "|", stringsAsFactors = TRUE)
+items <- read.csv(items_csv,header = TRUE,sep = "|", stringsAsFactors = TRUE)
+prices <- read.csv(prices_csv, header = TRUE, sep = "|", stringsAsFactors = TRUE)
+
+```
+
+##Structure of the data
+
+```{r echo = FALSE}
+
+dim(train)
+dim(items)
+dim(prices)
+
+```
+### The items data set has 12824 rows and 10 features.The train data set has 135117 rows and 4 features with the target feature Date.
+
+```{r echo = FALSE}
+
+str(train)
+str(items)
+
+```
+## Viewing some records in threes data set
+
+```{r echo = FALSE}
+head(train)
+
+head(items)
+
+head(prices)
+
+```
+## After that, the whole procedure has begun. I divide the whole process into 4 steps:
+* 1. Cleaning data
+* 2. Visualization and analyst
+* 3. Model selection
+* 4. Final Prediction
+
+### Rename for prices file
+
+```{r}
+date.names <-c("pid","size",as.character(seq(as.Date('2017-10-01'), to = as.Date('2018-02-28'), by = '1 day')))
+names(prices) <- date.names
+
+```
+### I saw that,the oldest product was released in "2017-10-01".To process release date, i converted it to numeric by the way as following: 
+* 1. Take each value minus the oldest product was released: "2017-10-01"
+* 2. Replace releasedate by new values
+
+```{r}
+train$date <- as.Date(train$date)
+dateRelease <- as.numeric(as.Date(items$releaseDate) - as.Date("2017-10-01") + 1)
+items$dateRelease <- dateRelease
+
+```
+
+### Next, I calculate the number of missing value in each column for items file
+
+```{r}
+colSums(sapply(items,is.na))
+levels(as.factor(items$mainCategory[is.na(items$subCategory)]))
+levels(as.factor(items$category[is.na(items$subCategory)]))
+
+```
+
+### Only on factor "15" of mainCategory and "16", "24", "30", "34" of category cause missing values on subCategory.
+## So i decided replace them by any values.I choose 100, 101,102,103.
+
+```{r}
+items$subCategory[items$mainCategory==15&items$category==16] <- 100
+items$subCategory[items$mainCategory==15&items$category==24] <- 101
+items$subCategory[items$mainCategory==15&items$category==30] <- 102
+items$subCategory[items$mainCategory==15&items$category==33] <- 103
+train$id <- paste(train$pid,train$size)
+items$id <- paste(items$pid, items$size)
+
+```
+### Seperating data into 4 months: October, November,December and January.
+### For processing missing values in target features "date", I have an idea as following:
+
+*Calculate the number of days in training set need for selling the number of stock's each product in Febrary out.
+
+
+## Now, i choose data from december for training set and january for testing set. 
+
+```{r}
+january <- train[train$date >='2018-01-01'&train$date<='2018-01-31',]
+january$date <- strftime(january$date, format = "%d")
+
+december <- train[train$date >= '2017-12-01' & train$date <= '2017-12-31',]
+december$date <- strftime(december$date, format = "%d")
+
+november <- train[train$date >= '2017-11-01' & train$date <= '2017-11-30',]
+november$date <- strftime(november$date, format = "%d")
+index <- november$date == 24
+november <- november[!index,]
+
+october <- train[train$date >= '2017-10-01' & train$date <= '2017-10-31',]
+october$date <- strftime(october$date, format = "%d")
+
+
+id_january <- unique(january$id)
+id_december <- unique(december$id)
+id_november <- unique(november$id)
+id_october <- unique(october$id)
+
+
+get_dates <- function(x,y){
+  id <- c(); date <- c(); sumu <- c();
+  for (itm in x){
+    stock <- items$stock[items$id == itm]
+    sum = 0
+    temp <- subset (y,id %in% itm)
+    for (j in 1: nrow(temp)){
+      sum = sum + temp[j,"units"]
+      if (sum >= stock){
+        date <- c(date,temp[j,"date"])
+        sumu <- c(sumu,sum)
+        #sumu <- c(sumu,stock)
+        id <- c(id,temp[j,"id"])
+        break;
+      }
+    }
+    sum = 0
+  }
+  df <- data.frame("id" = id, "stock" = sumu, "date" = date)
+  # if sum < stock
+  id_remain <- x[!(x %in% df$id)]
+  temp <- subset(y, id %in% id_remain)
+  group_temp <- group_by(temp,id)
+  suma_temp <- summarise(group_temp,'stock' = sum(units), "date" = max(date)) 
+  return (rbind(suma_temp,df))
+}
+
+jan <- get_dates(id_january,january)
+dec <- get_dates(id_december, december)
+nov <- get_dates(id_november,november)
+oct <- get_dates(id_october, october)
+
+
+```
+
+```{r}
+dataset <- rbind (dec,jan)
+training <-  merge(items[,-9],dec,by = "id", all = TRUE)
+training <- training[,-c(1,10)]
+na_training <- is.na(training$date)
+training[na_training,10] <- 0
+training[na_training,11] <- 0
+training$date <- as.numeric(training$date)
+
+testing <- merge(items[,-9],jan,by = "id", all.x = TRUE)
+testing$date <- as.numeric(testing$date)
+testing <- testing[,-c(1,10)]
+na_testing <- is.na(testing$date)
+testing[na_testing,10] <- 0
+testing[na_testing,11] <- 0
+testing$date <- as.numeric(testing$date)
+
+```
+### MODEL SELECTION FOR THE FIRST WAY
+### First we need create formula for model
+```{r}
+# CREATE FORMULA 
+set.seed(12345)
+predictorVars <- c("color","brand","mainCategory","subCategory","category","dateRelease","stock")
+predictorVars <- paste(predictorVars,collapse = "+")
+form = as.formula(paste("date~",predictorVars, collapse = "+"))
+```
+
+### The first model i choose to fit in the training set is linear regression. 
+
+```{r}
+modelFit1 <- lm(formula = form, training)
+predictions <- predict (modelFit1, testing)
+error_lng<- sqrt(sum(abs(predictions - testing$date)))
+error_lng
+
+```
+### Error is quite large because in our data set has nominal attributes (color and brand). Linear regression is the simplest model but it's useful for data set which contains only numerical attributes. 
+
+### The second model which i chose is random forest. The model, prediction and error calculation can be found below:
+```{r}
+modelFit_randomforest <- randomForest(form,data = training,n.trees = 1000)
+predrf <- predict (modelFit_randomforest, testing,n.trees = 1000)
+error_rf <- sqrt(sum(abs(round(predrf) - testing$date)))
+error_rf
+
+```
+
+### The other model to fit in the training data is Gradient boosting.As below:
+```{r}
+modelgbm <- gbm (formula = form,data = training, distribution = "gaussian", n.trees = 2500,n.minobsinnode = 30,shrinkage = 0.01)
+predgbm <- predict (modelgbm, testing,n.trees = 1500)
+error_gbm <- sqrt(sum(abs(round(predgbm) - testing$date)))
+error_gbm
+```
+
+### Decission Tree
+
+```{r}
+modeltree <- rpart(formula = form , data = training)
+preddtree <- predict (modeltree, testing)
+error_tree <- sqrt(sum(abs(round(preddtree) - testing$date)))
+error_tree
+```
+### Another useful model is BAGGING.
+```{r}
+modelbagging <- bagging(form, data= training)
+predbagging <- predict(object = modelbagging, newdata = testing)
+error_bagging<- sqrt(sum(abs(round(predbagging) - testing$date)))
+error_bagging
+```
+
+### XGBOOST
+#### The first step of XGBOOST is convert from categorical features to numeric. I used caret package to do it. As following:
+
+```{r}
+dmy <- dummyVars("~color + brand", data = training)
+df <- data.frame(predict(dmy,training))
+new_training <- cbind(training[,-c(1,2,3,4)],df)
+dmy <- dummyVars("~color + brand", data = testing)
+df <- data.frame(predict(dmy,testing))
+new_testing <- cbind(testing[,-c(1,2,3,4)],df)
+dmy <- dummyVars("~color + brand", data = items)
+df <- data.frame(predict(dmy,items))
+new_items <- cbind(items[,-c(1,2,3,4)],df)
+new_items <- new_items[,-c(6,8)]
+```
+
+#### The next step of XGBOOST is to transform the data set into matrix and tune the parameters.
+
+```{r}
+
+train <- as.matrix(new_training,rownames.force = NA)
+test <- as.matrix(new_testing,rownames.force = NA)
+train_data <- xgb.DMatrix(data= train[,c(1:6,8:ncol(train))], label = train[,"date"])
+
+param <- list (
+  objective = "reg:linear",
+  eval_metric = "rmse",
+  booster = "gbtree",
+  max_depth = 8,
+  eta = 0.01,
+  gamma = 0.0385,
+  subsample = 0.734,
+  colsample_bytree = 0.512
+)
+
+modelxgb <- xgb.train(params = param,data = train_data,nrounds = 1000,
+                      watchlist = list(train = train_data),verbose = TRUE,
+                      print_every_n = 50, nthread = 6)
+test_data <- xgb.DMatrix(data = test[,c(1:6,8:ncol(train))])
+predxgb <- predict(modelxgb,test_data)
+error_xgb <- sqrt(sum(abs(round(predxgb) - testing$date)))
+error_xgb
+
+```
+### STACKING
+#### Stacking is an ensemble algorithm where a new model is trained to combine the predictions from two or more models already trained or your dataset. So, i will combine the predictions from : GBM, RANDOMFOREST, DECISION TREE, and BAGGING to create a new data set and train it by XGBOOST or RANDOMFOREST.
+
+### STACKING WITH XGBOOST MODEL
+```{r}
+# Table B1
+predDF <- data.frame(predrf,predgbm,preddtree,predbagging, 'date' = testing$date)
+
+train <- as.matrix(predDF,rownames.force = NA)
+train_data <- xgb.DMatrix(data = train[,1:4], label = train[,"date"])
+
+param <- list (
+  objective = "reg:linear",
+  eval_metric = "rmse",
+  booster = "gbtree",
+  max_depth = 100,
+  eta = 0.123,
+  gamma = 0.0385,
+  subsample = 0.632,
+  colsample_bytree = 0.512
+)
+
+modelstack <- xgb.train(params = param,data = train_data,nrounds = 1000,
+                      watchlist = list(train = train_data),verbose = TRUE,
+                      print_every_n = 50, nthread = 4)
+predictions <- predict(modelstack,train_data)
+error_stacked <- sqrt(sum(predictions - predDF$date))
+error_stacked
+
+```
+### STACKING WITH RANDOM FOREST MODEL
+```{r}
+# Table B1
+predDF <- data.frame(predrf,predgbm,preddtree,predbagging, 'date' = testing$date)
+modelstack <- randomForest(date~., data = predDF,n.trees = 1000, cv.fold = 5)
+predictions <- predict(modelstack, predDF)
+error_stacked_rf <- sqrt(sum(abs(predictions - predDF$date)))
+error_stacked_rf
+
+
+```
+### As we can see, the stakcing method with XGBOOST model returns the best of result ERROR. So i decided to choose stacking method for training data.I chose stacking model with XGBOOST for final prediction.
+
+```
+### **FINAL PREDICTION**
+
+
+
+```{r}
+# Table B1
+predDF <- data.frame(predrf,predgbm,preddtree,predbagging, 'date' = testing$date)
+
+#TABLE C1
+# RANDOM FOREST
+predrf_2 <- predict(modelFit_randomforest, items,n.trees = 1000)
+#Gradient boosting
+predgbm_2 <- predict (modelgbm, items,n.trees = 1500)
+#Decission Tree
+preddtree_2 <- predict (modeltree, items)
+#Bagging
+predbagging_2 <- predict (modelbagging,items)
+predDF2 <- data.frame(predrf_2,predgbm_2,preddtree_2,predbagging_2)
+
+train <- as.matrix(predDF,rownames.force = NA)
+train_data <- xgb.DMatrix(data = train[,1:4], label = train[,"date"])
+
+test <- as.matrix(predDF2, rownames.force = NA)
+test_data <- xgb.DMatrix(data = test)
+
+param <- list (
+  objective = "reg:linear",
+  eval_metric = "rmse",
+  booster = "gbtree",
+  max_depth = 100,
+  eta = 0.123,
+  gamma = 0.0385,
+  subsample = 0.632,
+  colsample_bytree = 0.512
+)
+
+modelxgb <- xgb.train(params = param,data = train_data,nrounds = 1000,
+                      watchlist = list(train = train_data),verbose = TRUE,
+                      print_every_n = 50, nthread = 4)
+predictions <- predict(modelxgb,test_data)
+predictions <- round(predictions)
+predictions[predictions >28] <- 28; predictions[predictions < 1] <- 1
+
+hist(predictions)
+
+```
+### CREATE CSV FOR SUBMITTING
+
+```{r}
+
+predictions <- as.Date(strptime(paste("2018-02",predictions,sep = "-"),format = "%Y-%m-%d"))
+
+result <- data.frame("pid" = items$pid, "size" = items$size, "soldOutDate" = predictions)
+
+write.table(result, file = "submit.csv",sep = "|",row.names = FALSE)
+
+head(result)
+
+```
