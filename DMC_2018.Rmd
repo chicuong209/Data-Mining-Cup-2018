@@ -209,8 +209,6 @@ error_lng<- sqrt(sum(abs(predictions - testing$date)))
 error_lng
 
 ```
-### Error is quite large because in our data set has nominal attributes (color and brand). Linear regression is the simplest model but it's useful for data set which contains only numerical attributes. 
-
 ### The second model which i chose is random forest. The model, prediction and error calculation can be found below:
 ```{r}
 modelFit_randomforest <- randomForest(form,data = training,n.trees = 1000)
