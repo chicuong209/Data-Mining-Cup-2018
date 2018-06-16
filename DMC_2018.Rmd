@@ -243,7 +243,7 @@ error_bagging
 ```
 
 ### XGBOOST
-#### The first step of XGBOOST is convert from categorical features to numeric. I used caret package to do it. As following:
+#### The first step of XGBOOST is to convert from categorical features to numeric. Using caret package to do it. As following:
 
 ```{r}
 dmy <- dummyVars("~color + brand", data = training)
