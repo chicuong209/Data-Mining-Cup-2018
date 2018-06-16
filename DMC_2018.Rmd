@@ -35,7 +35,7 @@ prices <- read.csv(prices_csv, header = TRUE, sep = "|", stringsAsFactors = TRUE
 
 ```
 
-##Structure of the data
+## Structure of the data
 
 ```{r echo = FALSE}
 
