@@ -108,12 +108,12 @@ items$id <- paste(items$pid, items$size)
 
 ```
 ### Seperating data into 4 months: October, November,December and January.
-### For processing missing values in target features "date", I have an idea as following:
+### For processing target feature "date", I have an idea as following:
 
-*Calculate the number of days in training set need for selling the number of stock's each product in Febrary out.
+*Calculate the number of days in training set and testing need for selling the number of stock's each product in Febrary out.
 
 
-## Now, i choose data from december for training set and january for testing set. 
+## I choose data from december for training set and january for testing set. 
 
 ```{r}
 january <- train[train$date >='2018-01-01'&train$date<='2018-01-31',]
