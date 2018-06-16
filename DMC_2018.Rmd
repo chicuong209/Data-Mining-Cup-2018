@@ -327,7 +327,7 @@ error_stacked_rf
 
 
 ```
-### As we can see, the stacking method with XGBOOST model returns the best of result ERROR. So i decided to choose stacking method for training data.I chose stacking model with XGBOOST for final prediction.
+### As we can see, the stacking method with XGBOOST model returns the best result of ERROR. So i decided to choose stacking method to train my data.I chose stacking model with XGBOOST for final prediction.
 
 ```
 ### **FINAL PREDICTION**
